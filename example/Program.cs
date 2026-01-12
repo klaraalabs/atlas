@@ -24,6 +24,7 @@ public class Program
             DataSeeder.Seed(db);
         }
 
+        app.MapAtlasEndpoints();
         app.MapUsersEndpoints();
 
         app.MapGet("/", () => Results.Ok(new
@@ -31,7 +32,9 @@ public class Program
             message = "Atlas Example API",
             endpoints = new
             {
-                queryUsers = "POST /api/users/query",
+                query = "POST /api/query",
+                entities = "GET /api/entities",
+                queryUsers = "POST /api/users/query (legacy)",
                 listUsers = "GET /api/users"
             }
         }));

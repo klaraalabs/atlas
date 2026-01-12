@@ -9,6 +9,12 @@ namespace Atlas.Query;
 public class AtlasQuery
 {
     /// <summary>
+    /// The entity to query (e.g., "users", "orders").
+    /// </summary>
+    [JsonPropertyName("entity")]
+    public string? Entity { get; set; }
+
+    /// <summary>
     /// Fields to select (e.g., ["id", "name", "balance.amount"]).
     /// </summary>
     [JsonPropertyName("select")]
