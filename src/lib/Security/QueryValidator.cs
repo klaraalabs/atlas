@@ -65,6 +65,14 @@ public class QueryValidator<TEntity>
                 continue;
             }
 
+            // Check navigation depth
+            var depth = selectField.Field.Split('.').Length;
+            if (depth > _policy.MaxNavigationDepthValue)
+            {
+                throw new AtlasSecurityException(
+                    $"Field '{selectField.Field}' exceeds maximum navigation depth ({depth} > {_policy.MaxNavigationDepthValue}).");
+            }
+
             if (!_policy.IsFieldAllowed(selectField.Field))
             {
                 throw CreateFieldNotAllowedException(selectField.Field, "selection");

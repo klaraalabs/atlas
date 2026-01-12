@@ -85,6 +85,24 @@ public class AtlasBuilder<TEntity> where TEntity : class
     }
 
     /// <summary>
+    /// Sets the maximum navigation depth for field paths (default: 3).
+    /// </summary>
+    public AtlasBuilder<TEntity> MaxNavigationDepth(int maxDepth)
+    {
+        _policy.MaxNavigationDepth(maxDepth);
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a global filter that is always applied (row-level security).
+    /// </summary>
+    public AtlasBuilder<TEntity> WhereAlways(System.Linq.Expressions.Expression<Func<TEntity, bool>> filter)
+    {
+        _policy.WhereAlways(filter);
+        return this;
+    }
+
+    /// <summary>
     /// Builds the policy.
     /// </summary>
     public AtlasPolicy<TEntity> BuildPolicy() => _policy;

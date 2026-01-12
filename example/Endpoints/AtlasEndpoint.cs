@@ -82,5 +82,35 @@ public static class AtlasEndpoint
         // GET /api/entities - List available entities
         app.MapGet("/api/entities", () => Results.Ok(new { entities = engine.RegisteredEntities }))
             .WithName("ListEntities");
+
+        // GET /api/schema - Full schema introspection
+        app.MapGet("/api/schema", () => Results.Ok(engine.GetSchema()))
+            .WithName("GetSchema");
+
+        // GET /api/schema/{entity} - Schema for a specific entity
+        app.MapGet("/api/schema/{entity}", (string entity) =>
+        {
+            var schema = engine.GetEntitySchema(entity);
+            if (schema is null)
+            {
+                return Results.NotFound(new { error = $"Entity '{entity}' not found." });
+            }
+            return Results.Ok(schema);
+        })
+        .WithName("GetEntitySchema");
+
+        // GET /api/cache/stats - Expression cache statistics
+        app.MapGet("/api/cache/stats", () =>
+        {
+            var stats = GlobalExpressionCache.Instance.GetStats();
+            return Results.Ok(new
+            {
+                hits = stats.Hits,
+                misses = stats.Misses,
+                size = stats.Size,
+                hitRate = stats.HitRate
+            });
+        })
+        .WithName("GetCacheStats");
     }
 }

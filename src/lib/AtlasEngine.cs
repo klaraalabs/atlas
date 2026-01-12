@@ -79,7 +79,7 @@ public class AtlasEngine
 
             // Apply default configuration
             var allowAllFieldsMethod = policyType.GetMethod("AllowAllFields")!;
-            allowAllFieldsMethod.Invoke(policy, null);
+            allowAllFieldsMethod.Invoke(policy, [2]); // Default navigation depth of 2
 
             var allowAllOpsMethod = policyType.GetMethod("AllowAllOperators")!;
             allowAllOpsMethod.Invoke(policy, null);
@@ -156,6 +156,34 @@ public class AtlasEngine
     /// Gets the list of registered entity names.
     /// </summary>
     public IEnumerable<string> RegisteredEntities => _executors.Keys;
+
+    /// <summary>
+    /// Gets schema information for all registered entities.
+    /// Useful for client discovery and documentation.
+    /// </summary>
+    public AtlasSchema GetSchema()
+    {
+        var entities = new Dictionary<string, AtlasEntitySchema>();
+
+        foreach (var (name, executor) in _executors)
+        {
+            entities[name] = executor.GetEntitySchema();
+        }
+
+        return new AtlasSchema { Entities = entities };
+    }
+
+    /// <summary>
+    /// Gets schema information for a specific entity.
+    /// </summary>
+    public AtlasEntitySchema? GetEntitySchema(string entityName)
+    {
+        if (_executors.TryGetValue(entityName, out var executor))
+        {
+            return executor.GetEntitySchema();
+        }
+        return null;
+    }
 }
 
 /// <summary>
@@ -165,6 +193,7 @@ internal interface IAtlasExecutor
 {
     Task<AtlasResult> ExecuteAsync(DbContext dbContext, AtlasQuery query, CancellationToken cancellationToken);
     Task<AtlasResultWithCount> ExecuteWithCountAsync(DbContext dbContext, AtlasQuery query, CancellationToken cancellationToken);
+    AtlasEntitySchema GetEntitySchema();
 }
 
 /// <summary>
@@ -185,6 +214,9 @@ internal class TypedExecutorWrapper<TEntity> : IAtlasExecutor
 
     public Task<AtlasResultWithCount> ExecuteWithCountAsync(DbContext dbContext, AtlasQuery query, CancellationToken cancellationToken)
         => _executor.ExecuteWithCountAsync(dbContext, query, cancellationToken);
+
+    public AtlasEntitySchema GetEntitySchema()
+        => _executor.GetEntitySchema();
 }
 
 /// <summary>

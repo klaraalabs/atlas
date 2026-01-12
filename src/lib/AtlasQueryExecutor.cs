@@ -1,3 +1,4 @@
+using System.Reflection;
 using Atlas.Ast;
 using Atlas.Compilation;
 using Atlas.Query;
@@ -18,6 +19,68 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
     {
         _policy = policy;
         _validator = new QueryValidator<TEntity>(policy);
+    }
+
+    /// <summary>
+    /// Gets schema information for this entity.
+    /// </summary>
+    public AtlasEntitySchema GetEntitySchema()
+    {
+        var fields = new List<AtlasFieldSchema>();
+        var entityType = typeof(TEntity);
+
+        foreach (var fieldPath in _policy.AllowedFields)
+        {
+            var fieldInfo = GetFieldInfo(entityType, fieldPath);
+            fields.Add(new AtlasFieldSchema
+            {
+                Path = fieldPath,
+                Type = fieldInfo.Type.Name,
+                IsNullable = fieldInfo.IsNullable,
+                IsCollection = fieldInfo.IsCollection,
+                IsNavigation = fieldPath.Contains('.')
+            });
+        }
+
+        return new AtlasEntitySchema
+        {
+            TypeName = entityType.Name,
+            Fields = fields.OrderBy(f => f.Path).ToList(),
+            AllowedOperators = _policy.AllowedOperators.Select(o => o.ToString().ToLowerInvariant()).ToList(),
+            MaxLimit = _policy.MaxLimitValue,
+            DefaultLimit = _policy.DefaultLimitValue,
+            MaxWhereDepth = _policy.MaxWhereDepthValue,
+            MaxSelectFields = _policy.MaxSelectFieldsValue,
+            MaxNavigationDepth = _policy.MaxNavigationDepthValue
+        };
+    }
+
+    private static (Type Type, bool IsNullable, bool IsCollection) GetFieldInfo(Type rootType, string fieldPath)
+    {
+        var parts = fieldPath.Split('.');
+        var currentType = rootType;
+
+        foreach (var part in parts)
+        {
+            var prop = currentType.GetProperty(part, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+            if (prop is null)
+            {
+                return (typeof(object), true, false);
+            }
+            currentType = prop.PropertyType;
+        }
+
+        var isNullable = !currentType.IsValueType || Nullable.GetUnderlyingType(currentType) != null;
+        var isCollection = currentType != typeof(string) &&
+                           currentType.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+
+        var displayType = Nullable.GetUnderlyingType(currentType) ?? currentType;
+        if (isCollection && currentType.IsGenericType)
+        {
+            displayType = currentType.GetGenericArguments()[0];
+        }
+
+        return (displayType, isNullable, isCollection);
     }
 
     /// <summary>
@@ -55,6 +118,12 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
         var flatData = await queryable.ToListAsync(cancellationToken);
         var data = ResultTransformer.ToNested(flatData);
 
+        // Apply distinct after transformation (dictionaries need content-based comparison)
+        if (query.Distinct)
+        {
+            data = data.Distinct(Helpers.DictionaryEqualityComparer.Instance).ToList();
+        }
+
         return new AtlasResult
         {
             Data = data,
@@ -73,6 +142,12 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
         CancellationToken cancellationToken)
     {
         var q = dbContext.Set<TEntity>().AsQueryable();
+
+        // Apply global filters (row-level security)
+        foreach (var globalFilter in _policy.GlobalFilters)
+        {
+            q = q.Where(globalFilter);
+        }
 
         // Include navigation properties needed for group by and select fields
         var allFields = query.GroupBy!
@@ -122,6 +197,12 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
         CancellationToken cancellationToken)
     {
         var q = dbContext.Set<TEntity>().AsQueryable();
+
+        // Apply global filters (row-level security)
+        foreach (var globalFilter in _policy.GlobalFilters)
+        {
+            q = q.Where(globalFilter);
+        }
 
         // Apply WHERE
         var whereNode = query.Where is not null
@@ -194,6 +275,12 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
 
         var baseQuery = dbContext.Set<TEntity>().AsQueryable();
 
+        // Apply global filters (row-level security)
+        foreach (var globalFilter in _policy.GlobalFilters)
+        {
+            baseQuery = baseQuery.Where(globalFilter);
+        }
+
         // Apply where clause for counting
         var whereNode = query.Where is not null
             ? WhereClauseParser.Parse(query.Where)
@@ -217,6 +304,12 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
         var flatData = await queryable.ToListAsync(cancellationToken);
         var data = ResultTransformer.ToNested(flatData);
 
+        // Apply distinct after transformation (dictionaries need content-based comparison)
+        if (query.Distinct)
+        {
+            data = data.Distinct(Helpers.DictionaryEqualityComparer.Instance).ToList();
+        }
+
         return new AtlasResultWithCount
         {
             Data = data,
@@ -236,6 +329,12 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
     {
         selectFields ??= SelectFieldParser.ParseAll(query.Select);
         var q = source;
+
+        // 0. Apply global filters (row-level security)
+        foreach (var globalFilter in _policy.GlobalFilters)
+        {
+            q = q.Where(globalFilter);
+        }
 
         // 1. Apply WHERE
         var whereNode = query.Where is not null
@@ -270,7 +369,7 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
         var effectiveLimit = _policy.GetEffectiveLimit(query.Limit);
         q = q.Take(effectiveLimit);
 
-        // 4. Apply SELECT projection using parsed select fields
+        // 5. Apply SELECT projection using parsed select fields
         var projectionCompiler = new ProjectionCompiler<TEntity>(_policy.IsFieldAllowed);
         var simpleFields = selectFields.Select(f => f.Field).ToList();
         var projection = projectionCompiler.Compile(simpleFields);

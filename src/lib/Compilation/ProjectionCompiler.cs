@@ -10,16 +10,19 @@ public class ProjectionCompiler<TEntity>
 {
     private readonly ParameterExpression _parameter;
     private readonly Func<string, bool>? _fieldValidator;
+    private readonly bool _useCache;
 
-    public ProjectionCompiler(Func<string, bool>? fieldValidator = null)
+    public ProjectionCompiler(Func<string, bool>? fieldValidator = null, bool useCache = true)
     {
         _parameter = Expression.Parameter(typeof(TEntity), "e");
         _fieldValidator = fieldValidator;
+        _useCache = useCache;
     }
 
     /// <summary>
     /// Compiles select fields into a projection that returns a Dictionary&lt;string, object?&gt;.
     /// Groups collection fields together to produce array of objects instead of parallel arrays.
+    /// Uses caching to avoid recompilation of identical projections.
     /// </summary>
     public Expression<Func<TEntity, Dictionary<string, object?>>> Compile(IEnumerable<string> fields)
     {
@@ -39,6 +42,20 @@ public class ProjectionCompiler<TEntity>
             }
         }
 
+        // Try cache first
+        if (_useCache)
+        {
+            var cacheKey = GlobalExpressionCache.GetProjectionKey<TEntity>(fieldList);
+            return GlobalExpressionCache.Instance.GetOrAdd<TEntity, Dictionary<string, object?>>(
+                cacheKey,
+                () => CompileCore(fieldList));
+        }
+
+        return CompileCore(fieldList);
+    }
+
+    private Expression<Func<TEntity, Dictionary<string, object?>>> CompileCore(List<string> fieldList)
+    {
         // Separate collection fields from simple fields
         // Collection fields are like "orders.amount", "orders.status" - group by collection path
         var simpleFields = new List<string>();

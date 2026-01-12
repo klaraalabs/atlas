@@ -49,6 +49,12 @@ public class AtlasQuery
     /// </summary>
     [JsonPropertyName("limit")]
     public int Limit { get; set; } = 25;
+
+    /// <summary>
+    /// Whether to return distinct results only.
+    /// </summary>
+    [JsonPropertyName("distinct")]
+    public bool Distinct { get; set; }
 }
 
 /// <summary>

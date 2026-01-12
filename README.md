@@ -9,7 +9,10 @@ A query compilation engine that maps structured JSON queries to Entity Framework
 -   **Filtering** - Rich WHERE clauses with AND/OR/NOT logic
 -   **Aggregations** - SUM, AVG, MIN, MAX, COUNT with optional GROUP BY
 -   **Collection queries** - ANY/ALL/NONE predicates for collection navigation
--   **Security policies** - Whitelist allowed fields and operators per entity
+-   **Distinct queries** - Deduplicate results across projected fields
+-   **Security policies** - Whitelist allowed fields, operators, and row-level filters
+-   **Schema introspection** - API endpoints for client discovery
+-   **Query caching** - Expression caching for improved performance
 -   **Auto-registration** - Scan your DbContext to register all entities automatically
 
 ## Installation
@@ -71,6 +74,7 @@ interface AtlasQuery {
     orderBy?: { field: string; direction: "asc" | "desc" }[];
     offset?: number; // Skip N records
     limit?: number; // Max records to return
+    distinct?: boolean; // Remove duplicate rows (default: false)
 }
 ```
 
@@ -287,6 +291,36 @@ Use aggregate functions with dot notation: `field.function`
 }
 ```
 
+## Distinct Queries
+
+Remove duplicate rows from results with the `distinct` option:
+
+```json
+{
+    "entity": "orders",
+    "select": ["status"],
+    "distinct": true
+}
+```
+
+**Response:**
+
+```json
+{
+    "data": [{ "status": "completed" }, { "status": "pending" }, { "status": "cancelled" }]
+}
+```
+
+Distinct works with multiple fields and nested projections:
+
+```json
+{
+    "entity": "users",
+    "select": ["isActive", "balance.currency"],
+    "distinct": true
+}
+```
+
 ## Security
 
 Atlas enforces security policies to control what clients can query.
@@ -324,6 +358,114 @@ Atlas.For<User>()
 Atlas.For<User>()
     .MaxLimit(100)      // Cap client-requested limits
     .DefaultLimit(25)   // Default when not specified
+```
+
+### Row-Level Security (Global Filters)
+
+Apply automatic WHERE clauses to every query for a given entity. Perfect for multi-tenant isolation or soft deletes:
+
+```csharp
+// Multi-tenant isolation
+Atlas.For<User>()
+    .AllowAllFields()
+    .WhereAlways(u => u.TenantId == currentTenantId);
+
+// Soft delete filtering
+Atlas.For<Order>()
+    .AllowAllFields()
+    .WhereAlways(o => !o.IsDeleted);
+```
+
+Multiple global filters are combined with AND:
+
+```csharp
+Atlas.For<Document>()
+    .WhereAlways(d => d.TenantId == tenantId)
+    .WhereAlways(d => d.Status != "archived")
+    .WhereAlways(d => d.AccessLevel <= userAccessLevel);
+```
+
+### Navigation Depth Limits
+
+Prevent deeply nested queries that could cause performance issues:
+
+```csharp
+Atlas.For<User>()
+    .AllowAllFields()
+    .MaxNavigationDepth(3);  // Max 3 levels of nesting
+```
+
+Queries exceeding the depth limit return an error:
+
+```json
+{ "error": "Navigation depth 4 exceeds maximum allowed depth of 3" }
+```
+
+## Schema Introspection
+
+Atlas provides endpoints for clients to discover available entities and fields.
+
+### Get Full Schema
+
+```csharp
+app.MapGet("/api/schema", () => engine.GetSchema());
+```
+
+**Response:**
+
+```json
+{
+    "entities": {
+        "users": {
+            "fields": [
+                { "name": "id", "type": "Guid" },
+                { "name": "name", "type": "String" },
+                { "name": "balance.amount", "type": "Decimal" }
+            ]
+        },
+        "orders": {
+            "fields": [...]
+        }
+    },
+    "operators": ["eq", "neq", "gt", "gte", "lt", "lte", ...],
+    "limits": {
+        "defaultLimit": 25,
+        "maxLimit": 100
+    }
+}
+```
+
+### Get Single Entity Schema
+
+```csharp
+app.MapGet("/api/schema/{entity}", (string entity) => engine.GetEntitySchema(entity));
+```
+
+## Performance
+
+### Expression Caching
+
+Atlas caches compiled expression trees to avoid recompilation on repeated queries. Monitor cache performance with:
+
+```csharp
+app.MapGet("/api/cache/stats", () =>
+{
+    var stats = GlobalExpressionCache.GetStats();
+    return new
+    {
+        hits = stats.Hits,
+        misses = stats.Misses,
+        size = stats.Size,
+        hitRate = stats.Size > 0 ? (double)stats.Hits / (stats.Hits + stats.Misses) : 0
+    };
+});
+```
+
+### Cache Management
+
+```csharp
+// Clear all cached expressions
+GlobalExpressionCache.Clear();
 ```
 
 ## Configuration Options

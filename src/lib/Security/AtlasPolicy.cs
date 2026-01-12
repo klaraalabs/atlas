@@ -11,10 +11,12 @@ public class AtlasPolicy<TEntity>
 {
     private readonly HashSet<string> _allowedFields = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<CompareOp> _allowedOperators = [];
+    private readonly List<Expression<Func<TEntity, bool>>> _globalFilters = [];
     private int _maxLimit = 100;
     private int _defaultLimit = 25;
     private int _maxWhereDepth = 5;
     private int _maxSelectFields = 50;
+    private int _maxNavigationDepth = 3;
 
     /// <summary>
     /// Creates a new policy for the entity type.
@@ -47,16 +49,90 @@ public class AtlasPolicy<TEntity>
     }
 
     /// <summary>
-    /// Allows all public properties of the entity.
+    /// Allows all public properties of the entity, including navigation properties up to the specified depth.
     /// </summary>
-    public AtlasPolicy<TEntity> AllowAllFields()
+    /// <param name="navigationDepth">How deep to traverse navigation properties. Default is 2 (e.g., "user.name").</param>
+    public AtlasPolicy<TEntity> AllowAllFields(int navigationDepth = 2)
     {
-        var properties = typeof(TEntity).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        AllowFieldsRecursive(typeof(TEntity), "", navigationDepth, []);
+        return this;
+    }
+
+    private void AllowFieldsRecursive(Type type, string prefix, int remainingDepth, HashSet<Type> visited)
+    {
+        if (remainingDepth < 0 || !visited.Add(type))
+        {
+            return;
+        }
+
+        var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
         foreach (var prop in properties)
         {
-            _allowedFields.Add(prop.Name.ToLowerInvariant());
+            var fieldPath = string.IsNullOrEmpty(prefix)
+                ? prop.Name.ToLowerInvariant()
+                : $"{prefix}.{prop.Name.ToLowerInvariant()}";
+
+            _allowedFields.Add(fieldPath);
+
+            // Check if this is a navigation property (complex type, not a primitive/string/etc.)
+            if (remainingDepth > 0 && IsNavigationType(prop.PropertyType))
+            {
+                var navType = GetUnderlyingType(prop.PropertyType);
+                if (navType is not null)
+                {
+                    AllowFieldsRecursive(navType, fieldPath, remainingDepth - 1, visited);
+                }
+            }
         }
-        return this;
+
+        visited.Remove(type);
+    }
+
+    private static bool IsNavigationType(Type type)
+    {
+        // Skip primitives, strings, common value types
+        if (type.IsPrimitive || type == typeof(string) || type == typeof(decimal) ||
+            type == typeof(DateTime) || type == typeof(DateTimeOffset) ||
+            type == typeof(Guid) || type == typeof(DateOnly) || type == typeof(TimeOnly))
+        {
+            return false;
+        }
+
+        // Handle nullable value types
+        var underlying = Nullable.GetUnderlyingType(type);
+        if (underlying is not null)
+        {
+            return IsNavigationType(underlying);
+        }
+
+        // It's a complex type (entity or collection)
+        return true;
+    }
+
+    private static Type? GetUnderlyingType(Type type)
+    {
+        // Handle collections (IEnumerable<T>, ICollection<T>, List<T>, etc.)
+        if (type.IsGenericType)
+        {
+            var genericDef = type.GetGenericTypeDefinition();
+            if (genericDef == typeof(IEnumerable<>) || genericDef == typeof(ICollection<>) ||
+                genericDef == typeof(IList<>) || genericDef == typeof(List<>) ||
+                genericDef == typeof(HashSet<>))
+            {
+                return type.GetGenericArguments()[0];
+            }
+        }
+
+        // Check if it implements IEnumerable<T>
+        var enumerable = type.GetInterfaces()
+            .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+        if (enumerable is not null && type != typeof(string))
+        {
+            return enumerable.GetGenericArguments()[0];
+        }
+
+        // It's a direct navigation property
+        return type;
     }
 
     /// <summary>
@@ -116,6 +192,26 @@ public class AtlasPolicy<TEntity>
     public AtlasPolicy<TEntity> MaxSelectFields(int maxFields)
     {
         _maxSelectFields = maxFields;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the maximum navigation depth for field paths (default: 3).
+    /// E.g., "user.balance.currency" has depth 3.
+    /// </summary>
+    public AtlasPolicy<TEntity> MaxNavigationDepth(int maxDepth)
+    {
+        _maxNavigationDepth = maxDepth;
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a global filter that is always applied to queries (row-level security).
+    /// Use this for tenant isolation, soft deletes, or other mandatory filters.
+    /// </summary>
+    public AtlasPolicy<TEntity> WhereAlways(Expression<Func<TEntity, bool>> filter)
+    {
+        _globalFilters.Add(filter);
         return this;
     }
 
@@ -189,6 +285,16 @@ public class AtlasPolicy<TEntity>
     /// Gets the maximum number of select fields.
     /// </summary>
     public int MaxSelectFieldsValue => _maxSelectFields;
+
+    /// <summary>
+    /// Gets the maximum navigation depth.
+    /// </summary>
+    public int MaxNavigationDepthValue => _maxNavigationDepth;
+
+    /// <summary>
+    /// Gets the global filters (row-level security).
+    /// </summary>
+    public IReadOnlyList<Expression<Func<TEntity, bool>>> GlobalFilters => _globalFilters;
 
     private static string GetFieldPath(Expression<Func<TEntity, object?>> selector)
     {
