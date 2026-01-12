@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/lib/">
+    <Project Path="src/lib/Atlas.csproj" />
+  </Folder>
+</Solution>
