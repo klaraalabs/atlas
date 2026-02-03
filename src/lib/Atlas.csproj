@@ -5,7 +5,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <!-- Package Metadata -->
-        <PackageId>Atlas</PackageId>
+        <PackageId>QueryAtlas</PackageId>
         <Version>0.1.0</Version>
         <Authors>Muntadhar Haydar</Authors>
         <Company>Klaraa Labs Ltd</Company>
@@ -15,7 +15,6 @@
         <RepositoryUrl>https://github.com/klaraalabs/atlas</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
-        <PackageReadmeFile>README.md</PackageReadmeFile>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);CS1591</NoWarn>
         <IncludeSymbols>true</IncludeSymbols>
