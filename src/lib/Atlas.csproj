@@ -6,7 +6,7 @@
         <Nullable>enable</Nullable>
         <!-- Package Metadata -->
         <PackageId>QueryAtlas</PackageId>
-        <Version>0.1.0</Version>
+        <Version>0.1.1</Version>
         <Authors>Muntadhar Haydar</Authors>
         <Company>Klaraa Labs Ltd</Company>
         <Description>Query compilation engine mapping structured JSON queries to Entity Framework Core IQueryable pipelines for building flexible, secure APIs.</Description>

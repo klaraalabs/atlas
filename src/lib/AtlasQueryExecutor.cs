@@ -359,6 +359,15 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
                 (o.Field.ToLowerInvariant(), o.Direction.Equals("desc", StringComparison.OrdinalIgnoreCase)));
             q = orderByCompiler.Apply(q, orderByClauses);
         }
+        else
+        {
+            // check if "Id" is in the TEntity and use it, otherwise skip ordering (note: OFFSET without ORDER BY may yield non-deterministic results)
+            var idProp = typeof(TEntity).GetProperty("Id", BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+            if (idProp != null)
+            {
+                q = q.OrderBy(e => EF.Property<object>(e, "Id"));
+            }
+        }
 
         // 3. Apply SKIP/TAKE
         if (query.Offset > 0)
