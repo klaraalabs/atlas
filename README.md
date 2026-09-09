@@ -18,7 +18,7 @@ A query compilation engine that maps structured JSON queries to Entity Framework
 ## Installation
 
 ```bash
-dotnet add package Atlas
+dotnet add package QueryAtlas
 ```
 
 ## Quick Start
