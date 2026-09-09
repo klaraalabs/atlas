@@ -1,0 +1,49 @@
+{
+    "name": "@klaraalabs/atlas-client",
+    "version": "0.1.0",
+    "description": "Simple TypeScript client for Atlas query APIs.",
+    "packageManager": "bun@1.2.22",
+    "type": "module",
+    "engines": {
+        "node": ">=18"
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "clean": "rm -rf dist",
+        "test": "bun test",
+        "prepack": "bun run clean && bun run build && bun test"
+    },
+    "keywords": [
+        "atlas",
+        "typescript",
+        "client",
+        "query"
+    ],
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/klaraalabs/atlas.git",
+        "directory": "clients/typescript"
+    },
+    "bugs": {
+        "url": "https://github.com/klaraalabs/atlas/issues"
+    },
+    "homepage": "https://github.com/klaraalabs/atlas/tree/main/clients/typescript#readme",
+    "publishConfig": {
+        "access": "public"
+    },
+    "devDependencies": {
+        "typescript": "^7.0.2"
+    }
+}
