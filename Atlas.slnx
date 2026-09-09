@@ -3,4 +3,7 @@
   <Folder Name="/src/lib/">
     <Project Path="src/lib/Atlas.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Atlas.Tests/Atlas.Tests.csproj" />
+  </Folder>
 </Solution>

@@ -88,8 +88,18 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
     /// Results are transformed to nested objects (e.g., "balance.amount" becomes { balance: { amount: ... } }).
     /// Supports aggregate functions (count, sum, avg, min, max) and GROUP BY.
     /// </summary>
-    public async Task<AtlasResult> ExecuteAsync(
+    public Task<AtlasResult> ExecuteAsync(
         DbContext dbContext,
+        AtlasQuery query,
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync(dbContext.Set<TEntity>(), query, cancellationToken);
+
+    /// <summary>
+    /// Compiles and executes the query against a caller-supplied source.
+    /// Use this overload for request-scoped authorization, tenancy, and soft-delete filters.
+    /// </summary>
+    public async Task<AtlasResult> ExecuteAsync(
+        IQueryable<TEntity> source,
         AtlasQuery query,
         CancellationToken cancellationToken = default)
     {
@@ -102,17 +112,17 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
         // Check if this is a GROUP BY query
         if (query.GroupBy is { Count: > 0 })
         {
-            return await ExecuteGroupByAsync(dbContext, query, selectFields, cancellationToken);
+            return await ExecuteGroupByAsync(source, query, selectFields, cancellationToken);
         }
 
         // Check if this is an aggregate query (without GROUP BY)
         if (SelectFieldParser.HasAggregates(selectFields))
         {
-            return await ExecuteAggregateAsync(dbContext, query, selectFields, cancellationToken);
+            return await ExecuteAggregateAsync(source, query, selectFields, cancellationToken);
         }
 
         // Regular query - build the queryable pipeline
-        var queryable = BuildQueryable(dbContext.Set<TEntity>(), query, selectFields);
+        var queryable = BuildQueryable(source, query, selectFields);
 
         // Execute and transform to nested structure
         var flatData = await queryable.ToListAsync(cancellationToken);
@@ -136,18 +146,12 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
     /// Executes a GROUP BY query with aggregates.
     /// </summary>
     private async Task<AtlasResult> ExecuteGroupByAsync(
-        DbContext dbContext,
+        IQueryable<TEntity> source,
         AtlasQuery query,
         List<SelectField> selectFields,
         CancellationToken cancellationToken)
     {
-        var q = dbContext.Set<TEntity>().AsQueryable();
-
-        // Apply global filters (row-level security)
-        foreach (var globalFilter in _policy.GlobalFilters)
-        {
-            q = q.Where(globalFilter);
-        }
+        var q = ApplyFilters(source, query);
 
         // Include navigation properties needed for group by and select fields
         var allFields = query.GroupBy!
@@ -155,21 +159,6 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
             .Distinct()
             .ToList();
         q = NavigationIncluder.IncludeNavigations(q, allFields);
-
-        // Apply WHERE
-        var whereNode = query.Where is not null
-            ? WhereClauseParser.Parse(query.Where)
-            : null;
-
-        if (whereNode is not null)
-        {
-            var predicateCompiler = new PredicateCompiler<TEntity>(_policy.IsFieldAllowed);
-            var predicate = predicateCompiler.Compile(whereNode);
-            if (predicate is not null)
-            {
-                q = q.Where(predicate);
-            }
-        }
 
         // Execute GROUP BY with aggregates
         var groupByCompiler = new GroupByCompiler<TEntity>(_policy.IsFieldAllowed);
@@ -191,33 +180,12 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
     /// Executes an aggregate query (e.g., sum, count, avg).
     /// </summary>
     private async Task<AtlasResult> ExecuteAggregateAsync(
-        DbContext dbContext,
+        IQueryable<TEntity> source,
         AtlasQuery query,
         List<SelectField> selectFields,
         CancellationToken cancellationToken)
     {
-        var q = dbContext.Set<TEntity>().AsQueryable();
-
-        // Apply global filters (row-level security)
-        foreach (var globalFilter in _policy.GlobalFilters)
-        {
-            q = q.Where(globalFilter);
-        }
-
-        // Apply WHERE
-        var whereNode = query.Where is not null
-            ? WhereClauseParser.Parse(query.Where)
-            : null;
-
-        if (whereNode is not null)
-        {
-            var predicateCompiler = new PredicateCompiler<TEntity>(_policy.IsFieldAllowed);
-            var predicate = predicateCompiler.Compile(whereNode);
-            if (predicate is not null)
-            {
-                q = q.Where(predicate);
-            }
-        }
+        var q = ApplyFilters(source, query);
 
         // Execute aggregates
         var aggregateCompiler = new AggregateCompiler<TEntity>(_policy.IsFieldAllowed);
@@ -236,8 +204,18 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
     /// <summary>
     /// Compiles and executes the query with a count of total matching records.
     /// </summary>
-    public async Task<AtlasResultWithCount> ExecuteWithCountAsync(
+    public Task<AtlasResultWithCount> ExecuteWithCountAsync(
         DbContext dbContext,
+        AtlasQuery query,
+        CancellationToken cancellationToken = default)
+        => ExecuteWithCountAsync(dbContext.Set<TEntity>(), query, cancellationToken);
+
+    /// <summary>
+    /// Compiles and executes the query against a caller-supplied source and returns the total count.
+    /// The count includes Atlas and policy filters, but excludes pagination.
+    /// </summary>
+    public async Task<AtlasResultWithCount> ExecuteWithCountAsync(
+        IQueryable<TEntity> source,
         AtlasQuery query,
         CancellationToken cancellationToken = default)
     {
@@ -250,7 +228,7 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
         // Check if this is a GROUP BY query
         if (query.GroupBy is { Count: > 0 })
         {
-            var groupResult = await ExecuteGroupByAsync(dbContext, query, selectFields, cancellationToken);
+            var groupResult = await ExecuteGroupByAsync(source, query, selectFields, cancellationToken);
             return new AtlasResultWithCount
             {
                 Data = groupResult.Data,
@@ -263,7 +241,7 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
         // Aggregates don't support count metadata (they return single row)
         if (SelectFieldParser.HasAggregates(selectFields))
         {
-            var aggResult = await ExecuteAggregateAsync(dbContext, query, selectFields, cancellationToken);
+            var aggResult = await ExecuteAggregateAsync(source, query, selectFields, cancellationToken);
             return new AtlasResultWithCount
             {
                 Data = aggResult.Data,
@@ -273,34 +251,13 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
             };
         }
 
-        var baseQuery = dbContext.Set<TEntity>().AsQueryable();
-
-        // Apply global filters (row-level security)
-        foreach (var globalFilter in _policy.GlobalFilters)
-        {
-            baseQuery = baseQuery.Where(globalFilter);
-        }
-
-        // Apply where clause for counting
-        var whereNode = query.Where is not null
-            ? WhereClauseParser.Parse(query.Where)
-            : null;
-
-        if (whereNode is not null)
-        {
-            var predicateCompiler = new PredicateCompiler<TEntity>(_policy.IsFieldAllowed);
-            var predicate = predicateCompiler.Compile(whereNode);
-            if (predicate is not null)
-            {
-                baseQuery = baseQuery.Where(predicate);
-            }
-        }
+        var baseQuery = ApplyFilters(source, query);
 
         // Get total count before pagination
         var totalCount = await baseQuery.CountAsync(cancellationToken);
 
         // Build full queryable with projection and pagination
-        var queryable = BuildQueryable(dbContext.Set<TEntity>(), query, selectFields);
+        var queryable = BuildQueryable(source, query, selectFields);
         var flatData = await queryable.ToListAsync(cancellationToken);
         var data = ResultTransformer.ToNested(flatData);
 
@@ -328,30 +285,9 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
         List<SelectField>? selectFields = null)
     {
         selectFields ??= SelectFieldParser.ParseAll(query.Select);
-        var q = source;
+        var q = ApplyFilters(source, query);
 
-        // 0. Apply global filters (row-level security)
-        foreach (var globalFilter in _policy.GlobalFilters)
-        {
-            q = q.Where(globalFilter);
-        }
-
-        // 1. Apply WHERE
-        var whereNode = query.Where is not null
-            ? WhereClauseParser.Parse(query.Where)
-            : null;
-
-        if (whereNode is not null)
-        {
-            var predicateCompiler = new PredicateCompiler<TEntity>(_policy.IsFieldAllowed);
-            var predicate = predicateCompiler.Compile(whereNode);
-            if (predicate is not null)
-            {
-                q = q.Where(predicate);
-            }
-        }
-
-        // 2. Apply ORDER BY
+        // 1. Apply ORDER BY
         if (query.OrderBy is { Count: > 0 })
         {
             var orderByCompiler = new OrderByCompiler<TEntity>(_policy.IsFieldAllowed);
@@ -369,7 +305,7 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
             }
         }
 
-        // 3. Apply SKIP/TAKE
+        // 2. Apply SKIP/TAKE
         if (query.Offset > 0)
         {
             q = q.Skip(query.Offset);
@@ -378,12 +314,38 @@ public class AtlasQueryExecutor<TEntity> where TEntity : class
         var effectiveLimit = _policy.GetEffectiveLimit(query.Limit);
         q = q.Take(effectiveLimit);
 
-        // 5. Apply SELECT projection using parsed select fields
+        // 3. Apply SELECT projection using parsed select fields
         var projectionCompiler = new ProjectionCompiler<TEntity>(_policy.IsFieldAllowed);
         var simpleFields = selectFields.Select(f => f.Field).ToList();
         var projection = projectionCompiler.Compile(simpleFields);
 
         return q.Select(projection);
+    }
+
+    private IQueryable<TEntity> ApplyFilters(IQueryable<TEntity> source, AtlasQuery query)
+    {
+        var q = source;
+
+        foreach (var globalFilter in _policy.GlobalFilters)
+        {
+            q = q.Where(globalFilter);
+        }
+
+        var whereNode = query.Where is not null
+            ? WhereClauseParser.Parse(query.Where)
+            : null;
+
+        if (whereNode is not null)
+        {
+            var predicateCompiler = new PredicateCompiler<TEntity>(_policy.IsFieldAllowed);
+            var predicate = predicateCompiler.Compile(whereNode);
+            if (predicate is not null)
+            {
+                q = q.Where(predicate);
+            }
+        }
+
+        return q;
     }
 }
 

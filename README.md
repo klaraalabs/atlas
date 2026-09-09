@@ -360,29 +360,39 @@ Atlas.For<User>()
     .DefaultLimit(25)   // Default when not specified
 ```
 
-### Row-Level Security (Global Filters)
+### Request-scoped access filters
 
-Apply automatic WHERE clauses to every query for a given entity. Perfect for multi-tenant isolation or soft deletes:
+Apply tenant and authorization constraints before passing a source to the typed executor. Atlas composes policy filters and validated client query clauses after this source filter:
 
 ```csharp
-// Multi-tenant isolation
-Atlas.For<User>()
-    .AllowAllFields()
-    .WhereAlways(u => u.TenantId == currentTenantId);
+var source = db.SalesInvoices
+    .Where(invoice => invoice.TenantId == currentUser.TenantId)
+    .Where(invoice => invoice.DeletedAt == null);
 
-// Soft delete filtering
-Atlas.For<Order>()
-    .AllowAllFields()
-    .WhereAlways(o => !o.IsDeleted);
+var result = await salesInvoiceExecutor.ExecuteAsync(source, query, ct);
 ```
 
-Multiple global filters are combined with AND:
+Use the source overload when access rules depend on the authenticated request. Do not rely on the client-controlled `where` clause for authorization. The client can omit or change it.
+
+`ExecuteWithCountAsync(source, query, ct)` uses the same source for both the result query and `TotalCount`. Normal queries, aggregates, and grouped queries also stay within the supplied source. The existing `DbContext` overloads remain available and are equivalent to passing `dbContext.Set<TEntity>()`.
+
+### Policy-level filters
+
+Use `WhereAlways` for rules that belong to the executor's policy and remain valid for its full lifetime:
+
+```csharp
+// Exclude retired rows from every query that uses this executor
+Atlas.For<Order>()
+    .AllowAllFields()
+    .WhereAlways(o => !o.IsRetired);
+```
+
+The supplied source, policy filters, and client filters compose with AND semantics. Multiple policy filters do too:
 
 ```csharp
 Atlas.For<Document>()
-    .WhereAlways(d => d.TenantId == tenantId)
     .WhereAlways(d => d.Status != "archived")
-    .WhereAlways(d => d.AccessLevel <= userAccessLevel);
+    .WhereAlways(d => !d.IsPermanentlyDeleted);
 ```
 
 ### Navigation Depth Limits
